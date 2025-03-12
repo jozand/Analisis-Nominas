@@ -14,6 +14,7 @@ def load_data(file):
             df["NIT"] = df["NIT"].astype(str)  # Asegurar que NIT sea string
         if "CODIGO" in df.columns:
             df["CODIGO"] = df["CODIGO"].astype(str)  # Asegurar que CODIGO sea string
+            df = df.dropna(subset=["CODIGO"])  # Eliminar filas donde CODIGO sea NaN
         if len(df.columns) > 11:
             df = df.rename(columns={df.columns[11]: "UNUM"})  # Columna L es UNUM
         clean_sheets[sheet_name] = df  # Guardar la hoja con el nombre limpio
@@ -31,8 +32,11 @@ def comparar_meses(df1, df2):
 def identificar_movimientos(sheets1, sheets2):
     hojas_excluidas = ["Gtos. de Representacion"]  # Lista de hojas a excluir
     
-    df1_total = pd.concat([df[["CODIGO", "Hoja"]] for sheet, df in sheets1.items() if "CODIGO" in df and sheet not in hojas_excluidas], ignore_index=True)
-    df2_total = pd.concat([df[["CODIGO", "Hoja"]] for sheet, df in sheets2.items() if "CODIGO" in df and sheet not in hojas_excluidas], ignore_index=True)
+    df1_total = pd.concat([df for sheet, df in sheets1.items() if "CODIGO" in df and sheet not in hojas_excluidas], ignore_index=True)
+    df2_total = pd.concat([df for sheet, df in sheets2.items() if "CODIGO" in df and sheet not in hojas_excluidas], ignore_index=True)
+    
+    df1_total = df1_total.dropna(subset=["CODIGO"])  # Eliminar filas sin CODIGO
+    df2_total = df2_total.dropna(subset=["CODIGO"])  # Eliminar filas sin CODIGO
     
     merged = df1_total.merge(df2_total, on="CODIGO", suffixes=("_actual", "_anterior"), how="inner")
     
@@ -40,39 +44,13 @@ def identificar_movimientos(sheets1, sheets2):
     
     # Excluir cualquier registro donde una de las hojas sea "Gtos. de Representación"
     cambios = cambios[~cambios["Hoja_anterior"].isin(hojas_excluidas) & ~cambios["Hoja_actual"].isin(hojas_excluidas)]
-    cambios = cambios[["CODIGO", "Hoja_anterior", "Hoja_actual"]]
+    
+    # Seleccionar solo las columnas que existen
+    columnas_requeridas = ["CODIGO", "PARTIDA PRESUPUESTARIA", "NIT", "EMPLEADO", "UNUM", "CARGO", "Hoja_anterior", "Hoja_actual"]
+    columnas_presentes = [col for col in columnas_requeridas if col in cambios.columns]
+    cambios = cambios[columnas_presentes]
     
     return cambios
-
-def generar_sankey(df):
-    if df.empty:
-        return None
-    
-    source_labels = list(set(df["Hoja_anterior"].dropna().unique()).union(set(df["Hoja_actual"].dropna().unique())))
-    source_target_map = {label: idx for idx, label in enumerate(source_labels)}
-    
-    df = df.dropna(subset=["Hoja_anterior", "Hoja_actual"])
-    df_grouped = df.groupby(["Hoja_anterior", "Hoja_actual"]).size().reset_index(name="count")
-    
-    source_indices = df_grouped["Hoja_anterior"].map(source_target_map).tolist()
-    target_indices = df_grouped["Hoja_actual"].map(source_target_map).tolist()
-    values = df_grouped["count"].tolist()
-    
-    sankey_figure = go.Figure(go.Sankey(
-        node=dict(
-            pad=15,
-            thickness=20,
-            label=source_labels
-        ),
-        link=dict(
-            source=source_indices,
-            target=target_indices,
-            value=values
-        )
-    ))
-    
-    sankey_figure.update_layout(title_text="Flujo de Movimientos entre Hojas", font_size=10)
-    return sankey_figure
 
 def main():
     st.title("📊 Comparador de Datos Mensuales por Hojas")
@@ -110,11 +88,6 @@ def main():
         st.subheader("🔄 Movimientos entre Hojas")
         movimientos = identificar_movimientos(sheets1, sheets2)
         st.dataframe(movimientos.head(50))  # Limitar la visualización para mejorar el rendimiento
-        
-        # Gráfico de movimientos con Sankey
-        fig_sankey = generar_sankey(movimientos)
-        if fig_sankey:
-            st.plotly_chart(fig_sankey)
     
 if __name__ == "__main__":
     main()
